@@ -1,0 +1,16 @@
+{
+  "name": "Relais — paiement hors ligne",
+  "short_name": "Relais",
+  "description": "Prototype de paiement de téléphone à téléphone sans réseau, par QR code.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#101418",
+  "theme_color": "#101418",
+  "lang": "fr",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

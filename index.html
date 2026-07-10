@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Relais — paiement hors ligne</title>
+<meta name="theme-color" content="#101418">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<style>
+  :root { --bg:#101418; --card:#1a2129; --line:#2a3542; --txt:#e8edf2;
+          --mut:#8fa0b0; --ok:#3ecf8e; --err:#ff6b6b; --acc:#5aa9e6; }
+  * { box-sizing:border-box; margin:0; font-family:system-ui,sans-serif; }
+  body { background:var(--bg); color:var(--txt); max-width:480px; margin:0 auto;
+         min-height:100vh; padding-bottom:70px; }
+  header { padding:16px; display:flex; justify-content:space-between;
+           align-items:baseline; }
+  header h1 { font-size:20px; letter-spacing:2px; }
+  header small { color:var(--mut); }
+  nav { position:fixed; bottom:0; left:0; right:0; max-width:480px;
+        margin:0 auto; display:flex; background:var(--card);
+        border-top:1px solid var(--line); }
+  nav button { flex:1; background:none; border:none; color:var(--mut);
+               padding:14px 4px; font-size:13px; }
+  nav button.on { color:var(--acc); font-weight:600; }
+  main { padding:0 16px; }
+  .card { background:var(--card); border:1px solid var(--line);
+          border-radius:12px; padding:14px; margin-bottom:12px; }
+  .note { display:flex; justify-content:space-between; align-items:center;
+          padding:10px 12px; border:1px solid var(--line); border-radius:10px;
+          margin-bottom:8px; }
+  .note b { font-size:17px; }
+  .mono { font-family:ui-monospace,monospace; font-size:12px; color:var(--mut);
+          word-break:break-all; }
+  .total { font-size:30px; font-weight:700; margin:6px 0 14px; }
+  button.big { width:100%; padding:13px; border-radius:10px; border:none;
+               background:var(--acc); color:#08131c; font-size:15px;
+               font-weight:600; margin-top:8px; }
+  button.ghost { background:none; border:1px solid var(--line);
+                 color:var(--txt); }
+  input, select { width:100%; padding:12px; border-radius:10px;
+          border:1px solid var(--line); background:var(--bg);
+          color:var(--txt); font-size:16px; margin:6px 0; }
+  #qrbox { background:#fff; border-radius:12px; padding:14px; width:fit-content;
+           margin:12px auto; }
+  #qrbox img, #qrbox canvas { display:block; }
+  video { width:100%; border-radius:12px; background:#000; }
+  .ok { color:var(--ok); font-weight:600; }
+  .err { color:var(--err); font-weight:600; }
+  .banner { border-radius:10px; padding:10px 12px; margin:10px 0;
+            font-size:14px; }
+  .banner.ok { background:#12301f; } .banner.err { background:#3a1717; }
+  .hint { color:var(--mut); font-size:13px; line-height:1.5; margin:8px 0; }
+  h2 { font-size:16px; margin:14px 0 8px; }
+  .hidden { display:none; }
+  .logline { font-size:12px; color:var(--mut); padding:4px 0;
+             border-bottom:1px solid var(--line); }
+</style>
+</head>
+<body>
+<header><h1>RELAIS</h1><small id="netstate">prototype — démo, aucune valeur réelle</small></header>
+<main>
+  <!-- ============ PORTEFEUILLE ============ -->
+  <section id="tab-wallet">
+    <div class="card">
+      <div class="hint">Solde disponible</div>
+      <div class="total" id="total">0,00 RLS</div>
+      <div id="notes"></div>
+      <button class="big ghost" onclick="demoGrant()">Recevoir une dotation de démonstration</button>
+      <div class="hint">Identité de cet appareil : <span class="mono" id="mypk"></span></div>
+    </div>
+  </section>
+
+  <!-- ============ RECEVOIR ============ -->
+  <section id="tab-receive" class="hidden">
+    <div class="card">
+      <h2>1. Demander un paiement</h2>
+      <input id="rx-amount" type="number" step="0.01" min="0.01" placeholder="Montant en RLS (ex. 5.00)">
+      <button class="big" onclick="makeRequest()">Générer la demande (QR)</button>
+      <div id="rx-qr"></div>
+    </div>
+    <div class="card">
+      <h2>2. Recevoir le billet</h2>
+      <button class="big ghost" onclick="startScan('note')">Scanner le paiement (caméra)</button>
+      <div class="hint">ou colle le code du payeur :</div>
+      <input id="rx-paste" placeholder="RLSN.… ou fragments RLSC.…">
+      <button class="big ghost" onclick="pasteIn('rx-paste')">Valider le code collé</button>
+      <div id="rx-result"></div>
+    </div>
+  </section>
+
+  <!-- ============ PAYER ============ -->
+  <section id="tab-pay" class="hidden">
+    <div class="card">
+      <h2>1. Lire la demande du receveur</h2>
+      <button class="big ghost" onclick="startScan('request')">Scanner sa demande (caméra)</button>
+      <div class="hint">ou colle son code :</div>
+      <input id="tx-paste" placeholder="RLSR.…">
+      <button class="big ghost" onclick="pasteIn('tx-paste')">Valider le code collé</button>
+    </div>
+    <div class="card hidden" id="tx-confirm">
+      <h2>2. Confirmer le paiement</h2>
+      <div id="tx-detail"></div>
+      <select id="tx-note"></select>
+      <button class="big" onclick="doPay()">Signer et afficher le billet</button>
+    </div>
+    <div class="card hidden" id="tx-show">
+      <h2>3. Fais scanner ce QR au receveur</h2>
+      <div id="tx-qr"></div>
+      <div class="hint" id="tx-chunkinfo"></div>
+      <button class="big ghost" onclick="cancelPay()">Annuler (le billet revient dans mon portefeuille)</button>
+      <button class="big" onclick="finishPay()">Le receveur a confirmé — terminer</button>
+    </div>
+  </section>
+
+  <!-- ============ ACTIVITÉ ============ -->
+  <section id="tab-log" class="hidden">
+    <div class="card"><h2>Billets vus (gossip local)</h2><div id="seenlist"></div></div>
+    <div class="card"><h2>Journal</h2><div id="loglist"></div></div>
+    <div class="card">
+      <button class="big ghost" onclick="if(confirm('Effacer portefeuille et historique de CET appareil ?')){localStorage.clear();location.reload()}">Réinitialiser cet appareil</button>
+    </div>
+  </section>
+
+  <!-- ============ SCANNER ============ -->
+  <section id="scanner" class="hidden">
+    <div class="card">
+      <video id="video" playsinline></video>
+      <div class="hint" id="scan-status">Vise le QR…</div>
+      <button class="big ghost" onclick="stopScan()">Fermer la caméra</button>
+    </div>
+  </section>
+</main>
+
+<nav>
+  <button id="nb-wallet" class="on" onclick="show('wallet')">Portefeuille</button>
+  <button id="nb-receive" onclick="show('receive')">Recevoir</button>
+  <button id="nb-pay" onclick="show('pay')">Payer</button>
+  <button id="nb-log" onclick="show('log')">Activité</button>
+</nav>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"></script>
+<script src="relais_core.js"></script>
+<script>
+"use strict";
+const R = Relais;
+
+/* ------- Émetteur de DÉMONSTRATION (seed publique => aucune valeur) ------- */
+const DEMO_ISSUER_SEED = new Uint8Array(32).fill(0xAA);
+const UNIT = "RLS", PLAFOND = 100000;
+let ISSUERS = {}, ME = null, demoIssuer = null;
+
+/* --------------------------- état persistant ------------------------------ */
+const S = {
+  load() {
+    this.seedHex = localStorage.seedHex ||
+      (localStorage.seedHex = R.hex(R.rand(32)));
+    this.wallet = JSON.parse(localStorage.wallet || "[]");       // [noteHex]
+    this.seen = new Map(JSON.parse(localStorage.seen || "[]"));
+    this.nonces = new Set(JSON.parse(localStorage.nonces || "[]"));
+    this.reqs = JSON.parse(localStorage.reqs || "{}");  // nonceHex -> {amount,at}
+    this.log = JSON.parse(localStorage.log || "[]");
+  },
+  save() {
+    localStorage.wallet = JSON.stringify(this.wallet);
+    localStorage.seen = JSON.stringify([...this.seen]);
+    localStorage.nonces = JSON.stringify([...this.nonces]);
+    localStorage.reqs = JSON.stringify(this.reqs);
+    localStorage.log = JSON.stringify(this.log.slice(-100));
+  },
+};
+function addLog(msg) {
+  S.log.push(new Date().toLocaleTimeString() + " — " + msg);
+  S.save(); renderLog();
+}
+
+/* --------------------------- base64url ------------------------------------ */
+const b64u = (u8) => btoa(String.fromCharCode(...u8))
+  .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const unb64u = (s) => Uint8Array.from(
+  atob(s.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0));
+
+/* --------------------------- init ----------------------------------------- */
+(async function init() {
+  if ("serviceWorker" in navigator) {
+    try { await navigator.serviceWorker.register("sw.js"); }
+    catch (e) { console.warn("SW non enregistré :", e); }
+  }
+  S.load();
+  ME = await R.keypairFromSeed(R.unhex(S.seedHex));
+  demoIssuer = await R.keypairFromSeed(DEMO_ISSUER_SEED);
+  ISSUERS = { "ong-demo": demoIssuer.pk };
+  document.getElementById("mypk").textContent =
+    "pk…" + R.hex(ME.pk).slice(-12);
+  renderWallet(); renderLog();
+  const net = () => document.getElementById("netstate").textContent =
+    (navigator.onLine ? "en ligne" : "HORS LIGNE") + " — démo, aucune valeur réelle";
+  addEventListener("online", net); addEventListener("offline", net); net();
+})();
+
+function ctx() {
+  const c = R.newContext(ISSUERS, ME.pk, PLAFOND);
+  c.seen = S.seen; c.myNonces = S.nonces;
+  return c;
+}
+
+/* --------------------------- navigation ----------------------------------- */
+function show(tab) {
+  stopScan();
+  for (const t of ["wallet", "receive", "pay", "log"]) {
+    document.getElementById("tab-" + t).classList.toggle("hidden", t !== tab);
+    document.getElementById("nb-" + t).classList.toggle("on", t === tab);
+  }
+}
+
+/* --------------------------- portefeuille --------------------------------- */
+const fr = (c) => (c / 100).toFixed(2).replace(".", ",");
+function walletNotes() { return S.wallet.map(h => R.decodeNote(R.unhex(h))); }
+function renderWallet() {
+  const notes = walletNotes();
+  const total = notes.reduce((s, n) => s + n.issuance.denomination, 0);
+  document.getElementById("total").textContent = fr(total) + " " + UNIT;
+  document.getElementById("notes").innerHTML = notes.map(n =>
+    `<div class="note"><div><b>${fr(n.issuance.denomination)} ${UNIT}</b>
+     <div class="mono">#${R.hex(n.issuance.noteId).slice(0,8)} ·
+     ${n.transfers.length} saut(s) · ${n.issuance.issuerId}</div></div></div>`
+  ).join("") || `<div class="hint">Aucun billet. Utilise la dotation de démonstration pour tester.</div>`;
+  renderSeen();
+}
+async function demoGrant() {
+  const now = Math.floor(Date.now() / 1000);
+  for (const denom of [2000, 500, 500, 200, 200]) {
+    const n = await R.issueNote(demoIssuer.sk, { noteId: R.rand(16),
+      denomination: denom, unit: UNIT, issuerId: "ong-demo",
+      issuedTo: ME.pk, issuedAt: now, expiresAt: now + 30 * 86400,
+      maxHops: 12 });
+    S.wallet.push(R.hex(R.encodeNote(n)));
+  }
+  S.save(); renderWallet();
+  addLog("Dotation démo : 5 billets (34,00 " + UNIT + ")");
+}
+
+/* --------------------------- recevoir ------------------------------------- */
+let currentReq = null;
+function makeRequest() {
+  const val = Math.round(parseFloat(
+    document.getElementById("rx-amount").value.replace(",", ".")) * 100);
+  if (!val || val <= 0) return alert("Montant invalide");
+  const req = { version: 1, recipientPk: ME.pk, amount: val, unit: UNIT,
+    nonce: R.rand(8), createdAt: Math.floor(Date.now() / 1000), ttl: 300 };
+  const nh = R.hex(req.nonce);
+  S.nonces.add(nh); S.reqs[nh] = { amount: val, at: req.createdAt };
+  S.save(); currentReq = req;
+  const payload = "RLSR." + b64u(R.encodeRequest(req));
+  showQR("rx-qr", payload,
+    `Demande : ${fr(val)} ${UNIT} — nonce ${nh.slice(0,8)}…`);
+  addLog(`Demande de ${fr(val)} ${UNIT} générée`);
+}
+
+async function handleNotePayload(u8) {
+  const out = document.getElementById("rx-result");
+  let note;
+  try { note = R.decodeNote(u8); }
+  catch (e) { out.innerHTML = `<div class="banner err">Billet illisible : ${e.message}</div>`; return; }
+  const last = note.transfers[note.transfers.length - 1];
+  const nh = last ? R.hex(last.requestNonce) : "";
+  const reqInfo = S.reqs[nh];
+  const req = reqInfo ? { version: 1, recipientPk: ME.pk,
+    amount: reqInfo.amount, unit: UNIT, nonce: R.unhex(nh),
+    createdAt: reqInfo.at, ttl: 300 } : (currentReq ||
+    { version: 1, recipientPk: ME.pk, amount: 0, unit: UNIT,
+      nonce: new Uint8Array(8), createdAt: 0, ttl: 0 });
+  const res = await R.validateNote(note, req, ctx(),
+    Math.floor(Date.now() / 1000));
+  if (res === "OK") {
+    S.wallet.push(R.hex(R.encodeNote(note)));
+    delete S.reqs[nh]; S.save(); renderWallet();
+    out.innerHTML = `<div class="banner ok">Paiement accepté ✓ — ${fr(note.issuance.denomination)} ${UNIT} ajoutés (billet #${R.hex(note.issuance.noteId).slice(0,8)})</div>`;
+    addLog(`Reçu ${fr(note.issuance.denomination)} ${UNIT} — validation OK`);
+  } else {
+    out.innerHTML = `<div class="banner err">Paiement refusé ✗ — code : ${res}</div>`;
+    addLog(`Billet refusé : ${res}`);
+    renderSeen();
+  }
+}
+
+/* --------------------------- payer ----------------------------------------- */
+let pendingReq = null, pendingNoteIdx = -1, pendingNoteHex = null;
+function handleRequestPayload(u8) {
+  let req;
+  try { req = R.decodeRequest(u8); }
+  catch (e) { return alert("Demande illisible : " + e.message); }
+  pendingReq = req;
+  const exact = walletNotes().map((n, i) => [n, i])
+    .filter(([n]) => n.issuance.denomination === req.amount &&
+                     n.issuance.unit === req.unit);
+  const box = document.getElementById("tx-confirm");
+  box.classList.remove("hidden");
+  document.getElementById("tx-detail").innerHTML =
+    `<div class="banner">Payer <b>${fr(req.amount)} ${req.unit}</b> à
+     <span class="mono">pk…${R.hex(req.recipientPk).slice(-12)}</span></div>` +
+    (exact.length ? "" :
+     `<div class="banner err">Aucune coupure exacte de ${fr(req.amount)} ${UNIT}
+      dans le portefeuille (v0.1 : pas de rendu de monnaie — demande au
+      receveur de fractionner sa demande).</div>`);
+  document.getElementById("tx-note").innerHTML = exact.map(([n, i]) =>
+    `<option value="${i}">Billet #${R.hex(n.issuance.noteId).slice(0,8)} —
+     ${fr(n.issuance.denomination)} ${UNIT} (${n.transfers.length} saut(s))</option>`
+  ).join("") || "<option value='-1'>—</option>";
+}
+async function doPay() {
+  const idx = parseInt(document.getElementById("tx-note").value);
+  if (idx < 0 || !pendingReq) return;
+  const note = R.decodeNote(R.unhex(S.wallet[idx]));
+  const paid = await R.makeTransfer(note, ME.sk, ME.pk,
+    pendingReq.recipientPk, pendingReq.nonce,
+    Math.floor(Date.now() / 1000));
+  pendingNoteIdx = idx; pendingNoteHex = S.wallet[idx];
+  S.wallet.splice(idx, 1); S.save(); renderWallet();
+  const payload = "RLSN." + b64u(R.encodeNote(paid));
+  document.getElementById("tx-show").classList.remove("hidden");
+  showQRPossiblyChunked("tx-qr", payload, "tx-chunkinfo");
+  addLog(`Paiement de ${fr(note.issuance.denomination)} ${UNIT} signé et affiché`);
+}
+function cancelPay() {
+  if (pendingNoteHex) { S.wallet.splice(pendingNoteIdx, 0, pendingNoteHex);
+    S.save(); renderWallet(); addLog("Paiement annulé, billet restauré"); }
+  resetPayUI();
+}
+function finishPay() { addLog("Paiement terminé (confirmé par le receveur)"); resetPayUI(); }
+function resetPayUI() {
+  pendingReq = null; pendingNoteHex = null; stopChunks();
+  document.getElementById("tx-confirm").classList.add("hidden");
+  document.getElementById("tx-show").classList.add("hidden");
+}
+
+/* --------------------------- QR affichage --------------------------------- */
+let chunkTimer = null;
+function showQR(elId, text, caption) {
+  const el = document.getElementById(elId);
+  el.innerHTML = `<div id="qrbox"></div>
+    <div class="hint">${caption || ""}</div>
+    <div class="hint">Code texte (secours sans caméra) :</div>
+    <input readonly value="${text}" onclick="this.select()">`;
+  new QRCode(el.querySelector("#qrbox"),
+    { text, width: 256, height: 256, correctLevel: QRCode.CorrectLevel.L });
+}
+function showQRPossiblyChunked(elId, payload, infoId) {
+  stopChunks();
+  const MAX = 1000;
+  if (payload.length <= MAX) {
+    showQR(elId, payload); 
+    document.getElementById(infoId).textContent = "";
+    return;
+  }
+  const data = payload.slice(5);                      // retire "RLSN."
+  const n = Math.ceil(data.length / (MAX - 20));
+  const size = Math.ceil(data.length / n);
+  const chunks = Array.from({ length: n }, (_, i) =>
+    `RLSC.${i + 1}.${n}.` + data.slice(i * size, (i + 1) * size));
+  let i = 0;
+  const el = document.getElementById(elId);
+  el.innerHTML = `<div id="qrbox"></div><div class="hint">Code texte complet :</div>
+                  <input readonly value="${payload}" onclick="this.select()">`;
+  const draw = () => {
+    el.querySelector("#qrbox").innerHTML = "";
+    new QRCode(el.querySelector("#qrbox"), { text: chunks[i],
+      width: 256, height: 256, correctLevel: QRCode.CorrectLevel.L });
+    document.getElementById(infoId).textContent =
+      `QR animé — fragment ${i + 1}/${n} (laisse le receveur filmer)`;
+    i = (i + 1) % n;
+  };
+  draw(); chunkTimer = setInterval(draw, 600);
+}
+function stopChunks() { if (chunkTimer) clearInterval(chunkTimer); chunkTimer = null; }
+
+/* --------------------------- scan caméra ---------------------------------- */
+let stream = null, scanMode = null, chunkBuf = {};
+async function startScan(mode) {
+  scanMode = mode; chunkBuf = {};
+  document.getElementById("scanner").classList.remove("hidden");
+  const video = document.getElementById("video");
+  try {
+    stream = await navigator.mediaDevices.getUserMedia(
+      { video: { facingMode: "environment" } });
+  } catch (e) {
+    document.getElementById("scan-status").textContent =
+      "Caméra indisponible (" + e.name + ") — utilise le code texte à coller. " +
+      "Rappel : la caméra exige HTTPS ou localhost.";
+    return;
+  }
+  video.srcObject = stream; await video.play();
+  const canvas = document.createElement("canvas");
+  const cx = canvas.getContext("2d", { willReadFrequently: true });
+  const tick = () => {
+    if (!stream) return;
+    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+      canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+      cx.drawImage(video, 0, 0);
+      const img = cx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = jsQR(img.data, img.width, img.height);
+      if (code && code.data) { if (onScan(code.data)) return; }
+    }
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+function stopScan() {
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  document.getElementById("scanner").classList.add("hidden");
+}
+function onScan(text) {                       // retourne true si terminé
+  const st = document.getElementById("scan-status");
+  if (text.startsWith("RLSC.")) {
+    const [, iS, nS, ...rest] = text.split(".");
+    chunkBuf[iS] = rest.join(".");
+    const n = parseInt(nS);
+    st.textContent = `Fragments reçus : ${Object.keys(chunkBuf).length}/${n}`;
+    if (Object.keys(chunkBuf).length === n) {
+      const full = "RLSN." + Array.from({ length: n },
+        (_, k) => chunkBuf[String(k + 1)]).join("");
+      stopScan(); dispatch(full); return true;
+    }
+    return false;
+  }
+  stopScan(); dispatch(text); return true;
+}
+function pasteIn(inputId) {
+  const v = document.getElementById(inputId).value.trim();
+  if (v) dispatch(v);
+}
+function dispatch(text) {
+  try {
+    if (text.startsWith("RLSR.")) return handleRequestPayload(unb64u(text.slice(5)));
+    if (text.startsWith("RLSN.")) return handleNotePayload(unb64u(text.slice(5)));
+    alert("Code non reconnu (attendu : RLSR., RLSN. ou RLSC.)");
+  } catch (e) { alert("Code invalide : " + e.message); }
+}
+
+/* --------------------------- activité ------------------------------------- */
+function renderSeen() {
+  const el = document.getElementById("seenlist");
+  el.innerHTML = [...S.seen].map(([id, e]) =>
+    `<div class="logline">#${id.slice(0,8)} · saut ${e.lastHop} · chaîne ${e.chainHashHex.slice(0,10)}…</div>`
+  ).join("") || `<div class="hint">Rien encore. Chaque paiement reçu alimente cette liste.</div>`;
+}
+function renderLog() {
+  document.getElementById("loglist").innerHTML =
+    S.log.slice().reverse().map(l => `<div class="logline">${l}</div>`).join("")
+    || `<div class="hint">Journal vide.</div>`;
+}
+</script>
+</body>
+</html>
