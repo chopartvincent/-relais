@@ -3,7 +3,7 @@
    cache-first. Apres le PREMIER chargement en ligne, l'application entiere
    fonctionne sans aucun reseau. */
 
-const CACHE = "relais-v0.3";
+const CACHE = "relais-v0.6-1";
 const LOCAL = [
   "./", "./index.html", "./relais_core.js",
   "./manifest.webmanifest", "./icon-192.png", "./icon-512.png",
